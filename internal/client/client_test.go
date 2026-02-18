@@ -5,52 +5,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 
-	"github.com/devaloi/chatterbox/internal/domain"
 	"github.com/devaloi/chatterbox/internal/hub"
+	"github.com/devaloi/chatterbox/internal/testutil"
 )
 
-// mockStore implements store.Store for testing.
-type mockStore struct {
-	mu       sync.Mutex
-	messages map[string][]domain.Message
-}
-
-func newMockStore() *mockStore {
-	return &mockStore{messages: make(map[string][]domain.Message)}
-}
-
-func (s *mockStore) Save(msg domain.Message) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.messages[msg.Room] = append(s.messages[msg.Room], msg)
-	return nil
-}
-
-func (s *mockStore) History(room string, limit int) ([]domain.Message, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	msgs := s.messages[room]
-	if len(msgs) > limit {
-		msgs = msgs[len(msgs)-limit:]
-	}
-	return msgs, nil
-}
-
-func (s *mockStore) Close() error { return nil }
-
-var upgrader = websocket.Upgrader{
+var testUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
 func setupTestServer(h *hub.Hub) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
+		conn, err := testUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
@@ -90,7 +60,7 @@ func readMessage(t *testing.T, conn *websocket.Conn) map[string]interface{} {
 
 func TestClientJoinAndChat(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := hub.New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
@@ -135,7 +105,7 @@ func TestClientJoinAndChat(t *testing.T) {
 
 func TestClientBroadcast(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := hub.New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
@@ -180,7 +150,7 @@ func TestClientBroadcast(t *testing.T) {
 
 func TestClientInvalidJSON(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := hub.New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
@@ -200,7 +170,7 @@ func TestClientInvalidJSON(t *testing.T) {
 
 func TestClientChatNotInRoom(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := hub.New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()

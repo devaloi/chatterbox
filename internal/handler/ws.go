@@ -10,9 +10,15 @@ import (
 	"github.com/devaloi/chatterbox/internal/hub"
 )
 
+// WebSocket read/write buffer sizes (bytes).
+const (
+	wsReadBufferSize  = 1024
+	wsWriteBufferSize = 1024
+)
+
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  wsReadBufferSize,
+	WriteBufferSize: wsWriteBufferSize,
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 

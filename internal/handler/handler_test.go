@@ -5,43 +5,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 
-	"github.com/devaloi/chatterbox/internal/domain"
 	"github.com/devaloi/chatterbox/internal/hub"
+	"github.com/devaloi/chatterbox/internal/testutil"
 )
-
-type mockStore struct {
-	mu       sync.Mutex
-	messages map[string][]domain.Message
-}
-
-func newMockStore() *mockStore {
-	return &mockStore{messages: make(map[string][]domain.Message)}
-}
-
-func (s *mockStore) Save(msg domain.Message) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.messages[msg.Room] = append(s.messages[msg.Room], msg)
-	return nil
-}
-
-func (s *mockStore) History(room string, limit int) ([]domain.Message, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	msgs := s.messages[room]
-	if len(msgs) > limit {
-		msgs = msgs[len(msgs)-limit:]
-	}
-	return msgs, nil
-}
-
-func (s *mockStore) Close() error { return nil }
 
 func TestHealth(t *testing.T) {
 	t.Parallel()
@@ -61,7 +32,7 @@ func TestHealth(t *testing.T) {
 
 func TestListRoomsEmpty(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := hub.New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
@@ -77,7 +48,7 @@ func TestListRoomsEmpty(t *testing.T) {
 
 func TestRoomInfoNotFound(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := hub.New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
@@ -93,7 +64,7 @@ func TestRoomInfoNotFound(t *testing.T) {
 
 func TestWSUpgradeNoUser(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := hub.New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
@@ -109,7 +80,7 @@ func TestWSUpgradeNoUser(t *testing.T) {
 
 func TestWSUpgradeSuccess(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := hub.New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()

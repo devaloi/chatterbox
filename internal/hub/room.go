@@ -1,11 +1,15 @@
 package hub
 
 import (
+	"log"
 	"sync"
 
 	"github.com/devaloi/chatterbox/internal/domain"
 	"github.com/devaloi/chatterbox/internal/store"
 )
+
+// roomBroadcastBuffer is the channel buffer size for room broadcast messages.
+const roomBroadcastBuffer = 256
 
 // Client is the interface that hub/room expects from a WebSocket client.
 type Client interface {
@@ -22,6 +26,7 @@ type Room struct {
 	store     store.Store
 	history   int
 	quit      chan struct{}
+	stopOnce  sync.Once
 }
 
 // NewRoom creates a new room with the given name and message store.
@@ -29,7 +34,7 @@ func NewRoom(name string, s store.Store, historyLimit int) *Room {
 	return &Room{
 		name:      name,
 		clients:   make(map[Client]bool),
-		broadcast: make(chan []byte, 256),
+		broadcast: make(chan []byte, roomBroadcastBuffer),
 		store:     s,
 		history:   historyLimit,
 		quit:      make(chan struct{}),
@@ -37,15 +42,30 @@ func NewRoom(name string, s store.Store, historyLimit int) *Room {
 }
 
 // Run starts the room's broadcast loop. Should be called as a goroutine.
+// Uses panic recovery so one room crash doesn't bring down the whole server.
 func (r *Room) Run() {
+	defer func() {
+		if rv := recover(); rv != nil {
+			log.Printf("room %s: recovered from panic: %v", r.name, rv)
+		}
+	}()
+
 	for {
 		select {
 		case msg := <-r.broadcast:
+			// Copy client list under lock, then send outside lock to avoid
+			// holding the read lock while calling into client Send methods
+			// (which may block or acquire their own locks).
 			r.mu.RLock()
+			clients := make([]Client, 0, len(r.clients))
 			for c := range r.clients {
-				c.Send(msg)
+				clients = append(clients, c)
 			}
 			r.mu.RUnlock()
+
+			for _, c := range clients {
+				c.Send(msg)
+			}
 		case <-r.quit:
 			return
 		}
@@ -53,8 +73,11 @@ func (r *Room) Run() {
 }
 
 // Stop signals the room's broadcast loop to exit.
+// Safe to call multiple times; only the first call takes effect.
 func (r *Room) Stop() {
-	close(r.quit)
+	r.stopOnce.Do(func() {
+		close(r.quit)
+	})
 }
 
 // Join adds a client to the room and sends history + presence.
@@ -66,13 +89,18 @@ func (r *Room) Join(c Client) {
 	// Send message history to the joining client.
 	if r.store != nil {
 		msgs, err := r.store.History(r.name, r.history)
-		if err == nil && len(msgs) > 0 {
+		if err != nil {
+			log.Printf("room %s: history error: %v", r.name, err)
+		} else if len(msgs) > 0 {
 			hm := domain.HistoryMessage{
 				Type:     domain.MsgHistory,
 				Room:     r.name,
 				Messages: msgs,
 			}
-			if data, err := domain.Encode(hm); err == nil {
+			data, err := domain.Encode(hm)
+			if err != nil {
+				log.Printf("room %s: encode history error: %v", r.name, err)
+			} else {
 				c.Send(data)
 			}
 		}
@@ -80,7 +108,10 @@ func (r *Room) Join(c Client) {
 
 	// Broadcast join notification.
 	joinMsg := domain.Message{Type: domain.MsgJoin, Room: r.name, User: c.Username()}
-	if data, err := domain.Encode(joinMsg); err == nil {
+	data, err := domain.Encode(joinMsg)
+	if err != nil {
+		log.Printf("room %s: encode join error: %v", r.name, err)
+	} else {
 		r.broadcast <- data
 	}
 
@@ -95,7 +126,10 @@ func (r *Room) Leave(c Client) {
 	r.mu.Unlock()
 
 	leaveMsg := domain.Message{Type: domain.MsgLeave, Room: r.name, User: c.Username()}
-	if data, err := domain.Encode(leaveMsg); err == nil {
+	data, err := domain.Encode(leaveMsg)
+	if err != nil {
+		log.Printf("room %s: encode leave error: %v", r.name, err)
+	} else {
 		r.broadcast <- data
 	}
 }
@@ -134,7 +168,10 @@ func (r *Room) sendPresence(c Client) {
 		Room:  r.name,
 		Users: r.Users(),
 	}
-	if data, err := domain.Encode(pm); err == nil {
-		c.Send(data)
+	data, err := domain.Encode(pm)
+	if err != nil {
+		log.Printf("room %s: encode presence error: %v", r.name, err)
+		return
 	}
+	c.Send(data)
 }

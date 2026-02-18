@@ -8,6 +8,9 @@ import (
 	"github.com/devaloi/chatterbox/internal/store"
 )
 
+// Channel buffer sizes for the hub's event channels.
+const hubChannelBuffer = 256
+
 // RegisterRequest asks the hub to register a client.
 type RegisterRequest struct {
 	Client Client
@@ -27,6 +30,10 @@ type MessageRequest struct {
 }
 
 // Hub manages all rooms and routes messages between clients.
+// It runs a single-goroutine event loop (Run) that serializes register,
+// unregister, and message operations, so internal map access within
+// handleRegister/handleUnregister/handleMessage is safe without locks.
+// The mu protects rooms for reads from outside the event loop (ListRooms, RoomInfo).
 type Hub struct {
 	rooms      map[string]*Room
 	mu         sync.RWMutex
@@ -37,15 +44,16 @@ type Hub struct {
 	maxRooms   int
 	maxHistory int
 	quit       chan struct{}
+	stopOnce   sync.Once
 }
 
 // New creates a new Hub.
 func New(s store.Store, maxRooms, maxHistory int) *Hub {
 	return &Hub{
 		rooms:      make(map[string]*Room),
-		register:   make(chan RegisterRequest, 256),
-		unregister: make(chan UnregisterRequest, 256),
-		message:    make(chan MessageRequest, 256),
+		register:   make(chan RegisterRequest, hubChannelBuffer),
+		unregister: make(chan UnregisterRequest, hubChannelBuffer),
+		message:    make(chan MessageRequest, hubChannelBuffer),
 		store:      s,
 		maxRooms:   maxRooms,
 		maxHistory: maxHistory,
@@ -70,13 +78,16 @@ func (h *Hub) Run() {
 }
 
 // Stop signals the hub's event loop to exit and stops all rooms.
+// Safe to call multiple times; only the first call takes effect.
 func (h *Hub) Stop() {
-	close(h.quit)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, r := range h.rooms {
-		r.Stop()
-	}
+	h.stopOnce.Do(func() {
+		close(h.quit)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for _, r := range h.rooms {
+			r.Stop()
+		}
+	})
 }
 
 // Register queues a client registration request.
@@ -129,9 +140,12 @@ func (h *Hub) handleRegister(req RegisterRequest) {
 		if len(h.rooms) >= h.maxRooms {
 			h.mu.Unlock()
 			errMsg := domain.ErrorMessage{Type: domain.MsgError, Message: "max rooms reached"}
-			if data, err := domain.Encode(errMsg); err == nil {
-				req.Client.Send(data)
+			data, err := domain.Encode(errMsg)
+			if err != nil {
+				log.Printf("encode error: %v", err)
+				return
 			}
+			req.Client.Send(data)
 			return
 		}
 		r = NewRoom(req.Room, h.store, h.maxHistory)
@@ -154,17 +168,16 @@ func (h *Hub) handleUnregister(req UnregisterRequest) {
 
 	r.Leave(req.Client)
 
-	// Auto-cleanup empty rooms.
+	// Auto-cleanup empty rooms. Hold the lock for the entire check-and-delete
+	// to prevent a TOCTOU race where a client could join between the count
+	// check and the delete.
+	h.mu.Lock()
 	if r.ClientCount() == 0 {
-		h.mu.Lock()
-		// Double-check after acquiring write lock.
-		if r.ClientCount() == 0 {
-			r.Stop()
-			delete(h.rooms, req.Room)
-			log.Printf("room deleted: %s", req.Room)
-		}
-		h.mu.Unlock()
+		r.Stop()
+		delete(h.rooms, req.Room)
+		log.Printf("room deleted: %s", req.Room)
 	}
+	h.mu.Unlock()
 }
 
 func (h *Hub) handleMessage(req MessageRequest) {
@@ -173,9 +186,12 @@ func (h *Hub) handleMessage(req MessageRequest) {
 	h.mu.RUnlock()
 	if !ok {
 		errMsg := domain.ErrorMessage{Type: domain.MsgError, Message: "room not found"}
-		if data, err := domain.Encode(errMsg); err == nil {
-			req.Sender.Send(data)
+		data, err := domain.Encode(errMsg)
+		if err != nil {
+			log.Printf("encode error: %v", err)
+			return
 		}
+		req.Sender.Send(data)
 		return
 	}
 
@@ -186,7 +202,10 @@ func (h *Hub) handleMessage(req MessageRequest) {
 		}
 	}
 
-	if data, err := domain.Encode(req.Message); err == nil {
-		r.Broadcast(data)
+	data, err := domain.Encode(req.Message)
+	if err != nil {
+		log.Printf("encode error: %v", err)
+		return
 	}
+	r.Broadcast(data)
 }

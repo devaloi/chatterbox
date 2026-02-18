@@ -6,16 +6,17 @@ import (
 	"time"
 
 	"github.com/devaloi/chatterbox/internal/domain"
+	"github.com/devaloi/chatterbox/internal/testutil"
 )
 
 func TestHubCreateRoom(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
 
-	c := newMockClient("alice")
+	c := testutil.NewMockClient("alice")
 	h.Register(c, "general")
 	time.Sleep(100 * time.Millisecond)
 
@@ -30,12 +31,12 @@ func TestHubCreateRoom(t *testing.T) {
 
 func TestHubRoomInfo(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
 
-	c := newMockClient("alice")
+	c := testutil.NewMockClient("alice")
 	h.Register(c, "general")
 	time.Sleep(100 * time.Millisecond)
 
@@ -54,13 +55,13 @@ func TestHubRoomInfo(t *testing.T) {
 
 func TestHubRouteMessage(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
 
-	c1 := newMockClient("alice")
-	c2 := newMockClient("bob")
+	c1 := testutil.NewMockClient("alice")
+	c2 := testutil.NewMockClient("bob")
 	h.Register(c1, "general")
 	h.Register(c2, "general")
 	time.Sleep(100 * time.Millisecond)
@@ -76,8 +77,8 @@ func TestHubRouteMessage(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Both clients should receive the message.
-	for _, c := range []*mockClient{c1, c2} {
-		msgs := c.getMessages()
+	for _, c := range []*testutil.MockClient{c1, c2} {
+		msgs := c.GetMessages()
 		found := false
 		for _, m := range msgs {
 			var decoded domain.Message
@@ -86,7 +87,7 @@ func TestHubRouteMessage(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("client %s did not receive message", c.name)
+			t.Errorf("client %s did not receive message", c.Name)
 		}
 	}
 
@@ -99,12 +100,12 @@ func TestHubRouteMessage(t *testing.T) {
 
 func TestHubAutoCleanup(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := New(s, 100, 50)
 	go h.Run()
 	defer h.Stop()
 
-	c := newMockClient("alice")
+	c := testutil.NewMockClient("alice")
 	h.Register(c, "temp")
 	time.Sleep(100 * time.Millisecond)
 
@@ -122,14 +123,14 @@ func TestHubAutoCleanup(t *testing.T) {
 
 func TestHubMaxRooms(t *testing.T) {
 	t.Parallel()
-	s := newMockStore()
+	s := testutil.NewMockStore()
 	h := New(s, 2, 50)
 	go h.Run()
 	defer h.Stop()
 
-	c1 := newMockClient("alice")
-	c2 := newMockClient("bob")
-	c3 := newMockClient("charlie")
+	c1 := testutil.NewMockClient("alice")
+	c2 := testutil.NewMockClient("bob")
+	c3 := testutil.NewMockClient("charlie")
 
 	h.Register(c1, "room1")
 	h.Register(c2, "room2")
@@ -143,7 +144,7 @@ func TestHubMaxRooms(t *testing.T) {
 	}
 
 	// c3 should have received an error.
-	msgs := c3.getMessages()
+	msgs := c3.GetMessages()
 	found := false
 	for _, m := range msgs {
 		var em domain.ErrorMessage
