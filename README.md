@@ -1,8 +1,8 @@
 # 💬 chatterbox
 
-[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![CI](https://github.com/devaloi/chatterbox/actions/workflows/ci.yml/badge.svg)](https://github.com/devaloi/chatterbox/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build](https://img.shields.io/badge/build-passing-brightgreen)]()
 
 A real-time WebSocket chat server in Go — named rooms, user presence, message history, and broadcast with gorilla/websocket.
 
